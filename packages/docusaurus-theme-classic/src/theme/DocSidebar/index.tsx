@@ -15,6 +15,10 @@ import useScrollPosition from '@theme/hooks/useScrollPosition';
 import Link from '@docusaurus/Link';
 import isInternalUrl from '@docusaurus/isInternalUrl';
 import type {Props} from '@theme/DocSidebar';
+import {
+  PropSidebarItem,
+  PropSidebarItemCategory,
+} from '@docusaurus/plugin-content-docs-types';
 import Logo from '@theme/Logo';
 
 import styles from './styles.module.css';
@@ -41,30 +45,66 @@ const isActiveSidebarItem = (item, activePath) => {
   return false;
 };
 
+type CollapseMap = Record<string, boolean | undefined>;
+
+const createInitialStates = (
+  items: readonly PropSidebarItem[],
+): CollapseMap => {
+  const map: Record<string, boolean | undefined> = {};
+  items.forEach((childItem: PropSidebarItem) => {
+    const itemType = childItem.type;
+    const itemLabel = childItem.label;
+    if (itemType === 'category') {
+      map[itemLabel] = (childItem as PropSidebarItemCategory).collapsed;
+    } else {
+      map[itemLabel] = false;
+    }
+  });
+  return map;
+};
+
+const createCollapseHandler = (
+  currStates: CollapseMap,
+  setStates: (items: CollapseMap) => void,
+  currLabel: string,
+) => {
+  return (isCollapsed: boolean) => {
+    const states = {...currStates};
+    Object.keys(states).forEach((label: string) => {
+      if (currLabel === label) {
+        states[label] = isCollapsed;
+      } else if (!isCollapsed) {
+        states[label] = true;
+      }
+    });
+    setStates(states);
+  };
+};
+
 function DocSidebarItemCategory({
   item,
   onItemClick,
   collapsible,
+  collapsed,
+  setCollapsed,
   activePath,
+  autoCollapse,
   ...props
 }) {
   const {items, label} = item;
 
   const isActive = isActiveSidebarItem(item, activePath);
   const wasActive = usePrevious(isActive);
-
+  const isCollapsed = isActive ? false : collapsed;
   // active categories are always initialized as expanded
   // the default (item.collapsed) is only used for non-active categories
-  const [collapsed, setCollapsed] = useState(() => {
-    if (!collapsible) {
-      return false;
-    }
-    return isActive ? false : item.collapsed;
-  });
 
   const menuListRef = useRef<HTMLUListElement>(null);
   const [menuListHeight, setMenuListHeight] = useState<string | undefined>(
     undefined,
+  );
+  const [collapsedStates, setCollapsedStates] = useState<CollapseMap>(
+    createInitialStates(items),
   );
   const handleMenuListHeight = (calc = true) => {
     setMenuListHeight(
@@ -78,7 +118,7 @@ function DocSidebarItemCategory({
     if (justBecameActive && collapsed) {
       setCollapsed(false);
     }
-  }, [isActive, wasActive, collapsed]);
+  }, [isActive, wasActive, isCollapsed]);
 
   const handleItemClick = useCallback(
     (e) => {
@@ -88,7 +128,7 @@ function DocSidebarItemCategory({
         handleMenuListHeight();
       }
 
-      setTimeout(() => setCollapsed((state) => !state), 100);
+      setCollapsed(!collapsed);
     },
     [menuListHeight],
   );
@@ -100,7 +140,7 @@ function DocSidebarItemCategory({
   return (
     <li
       className={clsx('menu__list-item', {
-        'menu__list-item--collapsed': collapsed,
+        'menu__list-item--collapsed': isCollapsed,
       })}
       key={label}>
       <a
@@ -121,20 +161,30 @@ function DocSidebarItemCategory({
           height: menuListHeight,
         }}
         onTransitionEnd={() => {
-          if (!collapsed) {
+          if (!isCollapsed) {
             handleMenuListHeight(false);
           }
         }}>
-        {items.map((childItem) => (
-          <DocSidebarItem
-            tabIndex={collapsed ? '-1' : '0'}
-            key={childItem.label}
-            item={childItem}
-            onItemClick={onItemClick}
-            collapsible={collapsible}
-            activePath={activePath}
-          />
-        ))}
+        {items.map((childItem) => {
+          const setItemCollapsed = createCollapseHandler(
+            collapsedStates,
+            setCollapsedStates,
+            childItem.label,
+          );
+          return (
+            <DocSidebarItem
+              tabIndex={collapsed ? '-1' : '0'}
+              key={childItem.label}
+              autoCollapse={autoCollapse}
+              item={childItem}
+              onItemClick={onItemClick}
+              collapsed={collapsedStates[childItem.label]}
+              setCollapsed={setItemCollapsed}
+              collapsible={collapsible}
+              activePath={activePath}
+            />
+          );
+        })}
       </ul>
     </li>
   );
@@ -187,10 +237,14 @@ function DocSidebar({
   path,
   sidebar,
   sidebarCollapsible = true,
+  autoCollapseSidebar,
   onCollapse,
   isHidden,
 }: Props): JSX.Element | null {
   const [showResponsiveSidebar, setShowResponsiveSidebar] = useState(false);
+  const [collapsedStates, setCollapsedStates] = useState<CollapseMap>(
+    createInitialStates(sidebar),
+  );
   const {
     navbar: {hideOnScroll},
     hideableSidebar,
@@ -264,18 +318,28 @@ function DocSidebar({
           )}
         </button>
         <ul className="menu__list">
-          {sidebar.map((item) => (
-            <DocSidebarItem
-              key={item.label}
-              item={item}
-              onItemClick={(e) => {
-                e.target.blur();
-                setShowResponsiveSidebar(false);
-              }}
-              collapsible={sidebarCollapsible}
-              activePath={path}
-            />
-          ))}
+          {sidebar.map((item) => {
+            const setItemCollapsed = createCollapseHandler(
+              collapsedStates,
+              setCollapsedStates,
+              item.label,
+            );
+            return (
+              <DocSidebarItem
+                key={item.label + collapsedStates[item.label]}
+                item={item}
+                onItemClick={(e) => {
+                  e.target.blur();
+                  setShowResponsiveSidebar(false);
+                }}
+                collapsed={collapsedStates[item.label]}
+                setCollapsed={setItemCollapsed}
+                collapsible={sidebarCollapsible}
+                autoCollapse={autoCollapseSidebar}
+                activePath={path}
+              />
+            );
+          })}
         </ul>
       </div>
       {hideableSidebar && (
